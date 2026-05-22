@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <meta name="theme-color" content="#1b3a1b" />
+  <meta name="description" content="Identifica mariposas y escarabajos nativos de Tijuana, Baja California." />
+  <title>El Jardín de la Tía Juana</title>
+
+  <!-- PWA Manifest inline -->
+  <link rel="manifest" href="data:application/json,%7B%22name%22%3A%22El%20Jard%C3%ADn%20de%20la%20T%C3%ADa%20Juana%22%2C%22short_name%22%3A%22Jard%C3%ADn%20TJ%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%230a1a0a%22%2C%22theme_color%22%3A%22%231b3a1b%22%7D">
+
+  <!-- TensorFlow.js y Teachable Machine Image -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --green-50: #e8f5e9;
+      --green-100: #c8e6c9;
+      --green-200: #a5d6a7;
+      --green-400: #66bb6a;
+      --green-600: #43a047;
+      --green-700: #2e7d32;
+      --green-900: #1b3a1b;
+      --bg-dark: #0a1a0a;
+      --bg-card: #1a2e1a;
+      --bg-deep: #0d1f0d;
+      --text-primary: #e8f5e9;
+      --text-secondary: #a5d6a7;
+      --text-muted: #66bb6a;
+      --border: #2e7d32;
+      --radius: 16px;
+      --radius-sm: 10px;
+    }
+
+    html, body {
+      height: 100%;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg-dark);
+      color: var(--text-primary);
+      overflow: hidden;
+    }
+
+    /* ── Layout ── */
+    #app {
+      display: flex;
+      flex-direction: column;
+      height: 100dvh;
+      max-width: 480px;
+      margin: 0 auto;
+    }
+
+    /* ── Header ── */
+    header {
+      background: var(--bg-card);
+      padding: 14px 18px 12px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      border-bottom: 0.5px solid var(--border);
+      flex-shrink: 0;
+    }
+    .logo {
+      font-size: 28px;
+      line-height: 1;
+    }
+    header h1 {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--green-100);
+      line-height: 1.2;
+    }
+    header p {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 1px;
+    }
+    .status-dot {
+      margin-left: auto;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #555;
+      transition: background 0.3s;
+      flex-shrink: 0;
+    }
+    .status-dot.ready { background: var(--green-400); box-shadow: 0 0 0 3px rgba(102,187,106,0.2); }
+    .status-dot.loading { background: #ffb74d; animation: pulse 1s ease-in-out infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+    /* ── Camera area ── */
+    #camera-section {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      background: var(--bg-deep);
+      overflow: hidden;
+    }
+
+    #webcam-container {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #webcam-container canvas,
+    #webcam-container video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    #preview-img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      display: none;
+      border-radius: 0;
+    }
+
+    /* Corner brackets */
+    .bracket {
+      position: absolute;
+      width: 24px; height: 24px;
+      border-color: var(--green-400);
+      border-style: solid;
+      opacity: 0.7;
+      pointer-events: none;
+      z-index: 5;
+    }
+    .bracket.tl { top: 12px; left: 12px; border-width: 3px 0 0 3px; border-radius: 4px 0 0 0; }
+    .bracket.tr { top: 12px; right: 12px; border-width: 3px 3px 0 0; border-radius: 0 4px 0 0; }
+    .bracket.bl { bottom: 12px; left: 12px; border-width: 0 0 3px 3px; border-radius: 0 0 0 4px; }
+    .bracket.br { bottom: 12px; right: 12px; border-width: 0 3px 3px 0; border-radius: 0 0 4px 0; }
+
+    /* Placeholder */
+    #placeholder {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      color: var(--text-muted);
+      padding: 2rem;
+      text-align: center;
+    }
+    #placeholder svg { width: 64px; height: 64px; opacity: 0.5; }
+    #placeholder h2 { font-size: 16px; font-weight: 500; color: var(--text-secondary); }
+    #placeholder p { font-size: 13px; line-height: 1.6; }
+
+    /* ── Bottom panel ── */
+    #bottom-panel {
+      background: var(--bg-card);
+      border-top: 0.5px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    /* Results */
+    #results {
+      padding: 14px 16px 10px;
+      display: none;
+    }
+    #results.visible { display: block; }
+
+    /* Greeting bubble */
+    .greeting-bubble {
+      font-size: 11px;
+      color: var(--text-muted);
+      letter-spacing: 0.3px;
+      margin-bottom: 6px;
+    }
+
+    /* Main result card */
+    .result-main {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--bg-deep);
+      border: 0.5px solid var(--border);
+      border-radius: 14px;
+      padding: 10px 14px;
+      margin-bottom: 10px;
+    }
+    .result-emoji {
+      font-size: 36px;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+    .result-info { flex: 1; min-width: 0; }
+    .result-name {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--green-100);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      line-height: 1.2;
+    }
+    .result-pct-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 5px;
+    }
+    .result-pct-bar-bg {
+      flex: 1;
+      height: 5px;
+      background: var(--bg-card);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .result-pct-bar-fill {
+      height: 100%;
+      border-radius: 4px;
+      background: var(--green-400);
+      transition: width 0.35s ease;
+    }
+    .result-pct-num {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--green-400);
+      flex-shrink: 0;
+      min-width: 36px;
+      text-align: right;
+    }
+
+    /* Secondary predictions */
+    .prediction-list {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .pred-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .pred-name {
+      font-size: 11px;
+      color: var(--text-secondary);
+      width: 130px;
+      flex-shrink: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .pred-bar-bg {
+      flex: 1;
+      background: var(--bg-deep);
+      border-radius: 4px;
+      height: 4px;
+      overflow: hidden;
+    }
+    .pred-bar-fill {
+      height: 100%;
+      border-radius: 4px;
+      background: var(--green-700);
+      transition: width 0.3s ease;
+    }
+    .result-desc {
+      font-size: 10px;
+      color: var(--text-muted);
+      line-height: 1.4;
+      margin: 3px 0 4px;
+      font-style: italic;
+    }
+    .pred-pct {
+      font-size: 11px;
+      color: var(--text-muted);
+      width: 32px;
+      text-align: right;
+      flex-shrink: 0;
+    }
+
+    /* Controls */
+    #controls {
+      display: flex;
+      gap: 8px;
+      padding: 10px 16px 14px;
+    }
+    .btn {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 12px 10px;
+      border-radius: var(--radius-sm);
+      border: none;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.1s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .btn:active { transform: scale(0.97); opacity: 0.85; }
+    .btn-primary {
+      background: var(--green-700);
+      color: var(--green-100);
+    }
+    .btn-secondary {
+      background: var(--bg-deep);
+      color: var(--text-secondary);
+      border: 0.5px solid var(--border);
+      flex: 0 0 auto;
+      width: 52px;
+      padding: 12px;
+    }
+    .btn svg { width: 20px; height: 20px; flex-shrink: 0; }
+    .btn span { white-space: nowrap; }
+
+    /* Info panel 🌸 */
+    #modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.75);
+      z-index: 100;
+      align-items: flex-end;
+      justify-content: center;
+    }
+    #modal-overlay.open { display: flex; }
+    #modal {
+      background: var(--bg-card);
+      border-radius: var(--radius) var(--radius) 0 0;
+      padding: 20px 20px 36px;
+      width: 100%;
+      max-width: 480px;
+      border-top: 0.5px solid var(--border);
+    }
+    #modal h3 {
+      font-size: 17px;
+      font-weight: 600;
+      color: var(--green-100);
+      margin-bottom: 6px;
+      line-height: 1.3;
+    }
+    #modal p {
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-bottom: 18px;
+      line-height: 1.6;
+    }
+    .manual-link {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--bg-deep);
+      border: 0.5px solid var(--border);
+      border-radius: 14px;
+      padding: 14px 16px;
+      text-decoration: none;
+      transition: opacity 0.15s;
+    }
+    .manual-link:active { opacity: 0.75; }
+    .manual-icon {
+      font-size: 30px;
+      flex-shrink: 0;
+      line-height: 1;
+    }
+    .manual-text { flex: 1; min-width: 0; }
+    .manual-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--green-100);
+      line-height: 1.3;
+      margin-bottom: 2px;
+    }
+    .manual-sub {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    .manual-arrow {
+      font-size: 18px;
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+    .btn-close-panel {
+      display: block;
+      width: 100%;
+      margin-top: 14px;
+      background: transparent;
+      border: 0.5px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text-secondary);
+      font-size: 13px;
+      padding: 11px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+
+    /* Loading overlay */
+    #loading-overlay {
+      display: none;
+      position: absolute;
+      inset: 0;
+      background: rgba(10,26,10,0.85);
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 14px;
+      z-index: 10;
+    }
+    #loading-overlay.show { display: flex; }
+    .spinner {
+      width: 36px; height: 36px;
+      border: 3px solid rgba(102,187,106,0.2);
+      border-top-color: var(--green-400);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #loading-overlay p { font-size: 13px; color: var(--text-secondary); }
+
+    /* Toast */
+    #toast {
+      position: fixed;
+      bottom: 100px;
+      left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      background: var(--bg-card);
+      color: var(--text-secondary);
+      border: 0.5px solid var(--border);
+      border-radius: 20px;
+      padding: 8px 18px;
+      font-size: 13px;
+      opacity: 0;
+      transition: opacity 0.2s, transform 0.2s;
+      pointer-events: none;
+      white-space: nowrap;
+      z-index: 200;
+    }
+    #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    #file-input { display: none; }
+  </style>
+</head>
+<body>
+
+<div id="app">
+
+  <header>
+    <div class="logo">🦋</div>
+    <div>
+      <h1>El Jardín de la Tía Juana</h1>
+      <p>Especies nativas · Tijuana, B.C.</p>
+    </div>
+    <div class="status-dot" id="status-dot" title="Estado del modelo"></div>
+  </header>
+
+  <div id="camera-section">
+    <div class="bracket tl"></div>
+    <div class="bracket tr"></div>
+    <div class="bracket bl"></div>
+    <div class="bracket br"></div>
+
+    <div id="placeholder">
+      <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M32 8 C20 8 10 20 10 32 C10 44 20 56 32 56 C44 56 54 44 54 32" stroke="#66bb6a" stroke-width="2" stroke-linecap="round"/>
+        <path d="M32 20 C26 20 22 26 22 32 C22 38 26 44 32 44" stroke="#66bb6a" stroke-width="1.5" stroke-linecap="round"/>
+        <circle cx="32" cy="32" r="3" fill="#66bb6a"/>
+        <path d="M18 14 Q12 8 8 16" stroke="#a5d6a7" stroke-width="1.5" stroke-linecap="round"/>
+        <path d="M46 14 Q52 8 56 16" stroke="#a5d6a7" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <h2>Activa la cámara o elige una imagen</h2>
+      <p>Apunta a una mariposa o escarabajo<br>para identificarlo</p>
+    </div>
+
+    <div id="webcam-container"></div>
+    <img id="preview-img" alt="Imagen seleccionada para clasificar" />
+
+    <div id="loading-overlay">
+      <div class="spinner"></div>
+      <p id="loading-text">Cargando modelo...</p>
+    </div>
+  </div>
+
+  <div id="bottom-panel">
+    <div id="results">
+      <div class="greeting-bubble">¡Hola! Soy tu vecino polinizador:</div>
+      <div class="result-main">
+        <div class="result-emoji" id="top-emoji">🦋</div>
+        <div class="result-info">
+          <div class="result-name" id="top-name">–</div>
+          <div class="result-desc" id="top-desc"></div>
+          <div class="result-pct-row">
+            <div class="result-pct-bar-bg">
+              <div class="result-pct-bar-fill" id="top-bar" style="width:0%"></div>
+            </div>
+            <span class="result-pct-num" id="top-pct">–</span>
+          </div>
+        </div>
+      </div>
+      <div class="prediction-list" id="prediction-list"></div>
+    </div>
+
+    <div id="controls">
+      <button class="btn btn-primary" id="btn-camera" onclick="toggleCamera()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+          <circle cx="12" cy="13" r="4"/>
+        </svg>
+        <span id="cam-btn-text">Activar cámara</span>
+      </button>
+
+      <label class="btn btn-secondary" title="Elegir imagen de galería">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
+          <polyline points="21 15 16 10 5 21"/>
+        </svg>
+        <input type="file" id="file-input" accept="image/*" onchange="loadImageFile(event)" />
+      </label>
+
+      <button class="btn btn-secondary" title="Aprende sobre jardines polinizadores" onclick="openModal()" style="font-size:20px; line-height:1;">
+        🌸
+      </button>
+    </div>
+  </div>
+
+</div>
+
+<!-- Panel 🌸 Aprende -->
+<div id="modal-overlay">
+  <div id="modal">
+    <h3>🌸 ¡Aprende a crear tu propio jardín polinizador!</h3>
+    <p>Los jardines polinizadores son espacios diseñados para atraer y alimentar a mariposas, abejas y otros insectos benéficos. Son clave para la biodiversidad urbana de Tijuana.</p>
+    <a class="manual-link" href="https://www.sedema.cdmx.gob.mx/storage/app/media/5-manual-practico-para-jardines-de-polinizadores.pdf" target="_blank" rel="noopener">
+      <div class="manual-icon">📖</div>
+      <div class="manual-text">
+        <div class="manual-title">Manual Práctico para jardines de polinizadores</div>
+        <div class="manual-sub">SEDEMA · Descarga PDF gratuito</div>
+      </div>
+      <div class="manual-arrow">↗</div>
+    </a>
+    <button class="btn-close-panel" onclick="closeModal()">Cerrar</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+  // ── Estado global ──────────────────────────────────────────────
+  let model = null;
+  let webcam = null;
+  let isStreaming = false;
+  let rafId = null;
+
+  const MODEL_URL = 'https://teachablemachine.withgoogle.com/models/9vUo2oZW-/';
+
+  // Información por especie — las claves deben coincidir con los nombres en Teachable Machine
+  const SPECIES_INFO = {
+    'Mariposa Monarca': {
+      emoji: '🦋',
+      desc: 'Migratoria icónica. Recorre miles de km y visita flores de milkweed para sobrevivir.'
+    },
+    'Vanessa cardui': {
+      emoji: '🦋',
+      desc: 'Mariposa de los cardos. Una de las más distribuidas del mundo, polinizadora versátil.'
+    },
+    'Euphydryas chalcedona': {
+      emoji: '🦋',
+      desc: 'Mariposa del chaparral. Nativa de Baja California, vuela de primavera a verano.'
+    },
+    'Limenitis lorquini': {
+      emoji: '🦋',
+      desc: 'Almirante de Lorquin. Prefiere zonas riparias y visita flores de sauce y cerezo.'
+    },
+    'Papilio rutulus': {
+      emoji: '🦋',
+      desc: 'Cola de golondrina occidental. Grande y llamativa, busca flores de cítricos y lavanda.'
+    },
+    'Hesperia': {
+      emoji: '🦋',
+      desc: 'Mariposa saltadora. Pequeña y rápida, polinizadora de pastos y flores silvestres.'
+    },
+    'Nathalis iole': {
+      emoji: '🦋',
+      desc: 'Azufre enana. La mariposa amarilla más pequeña de Norteamérica. Le encantan los ásters.'
+    },
+    'Escarabajo': {
+      emoji: '🪲',
+      desc: 'Coleóptero polinizador. Visita flores abiertas y transfiere polen entre plantas.'
+    },
+    'Fondo': {
+      emoji: '🌿',
+      desc: 'No se detectó ninguna especie en primer plano. Intenta acercar más la cámara.'
+    },
+    'Background': {
+      emoji: '🌿',
+      desc: 'No se detectó ninguna especie en primer plano. Intenta acercar más la cámara.'
+    },
+  };
+
+  function getInfo(name) {
+    // Busca coincidencia exacta o parcial
+    for (const [key, info] of Object.entries(SPECIES_INFO)) {
+      if (name.toLowerCase().includes(key.toLowerCase()) || key.toLowerCase().includes(name.toLowerCase())) {
+        return info;
+      }
+    }
+    const n = name.toLowerCase();
+    if (n.includes('mariposa') || n.includes('butterfly') || n.includes('papilio') || n.includes('vanessa')) {
+      return { emoji: '🦋', desc: 'Mariposa polinizadora nativa de la región de Tijuana.' };
+    }
+    if (n.includes('escarabajo') || n.includes('beetle') || n.includes('coleopt')) {
+      return { emoji: '🪲', desc: 'Coleóptero polinizador nativo de Baja California.' };
+    }
+    return { emoji: '🌿', desc: 'Especie detectada en el jardín.' };
+  }
+
+  // ── Panel 🌸 ───────────────────────────────────────────────────
+  function openModal() {
+    document.getElementById('modal-overlay').classList.add('open');
+  }
+  function closeModal() {
+    document.getElementById('modal-overlay').classList.remove('open');
+  }
+  document.getElementById('modal-overlay').addEventListener('click', (e) => {
+    if (e.target === document.getElementById('modal-overlay')) closeModal();
+  });
+
+  // ── Cargar modelo ──────────────────────────────────────────────
+  async function loadModelFromURL(url) {
+    showLoading('Cargando modelo de IA...');
+    setStatus('loading');
+    try {
+      model = await tmImage.load(url + 'model.json', url + 'metadata.json');
+      hideLoading();
+      setStatus('ready');
+      document.getElementById('placeholder').style.display = 'none';
+    } catch (err) {
+      hideLoading();
+      setStatus('');
+      showToast('❌ Error al cargar el modelo.');
+      console.error(err);
+    }
+  }
+
+  // ── Cámara en vivo ─────────────────────────────────────────────
+  async function toggleCamera() {
+    if (!model) { showToast('El modelo aún se está cargando...'); return; }
+
+    if (isStreaming) {
+      stopCamera();
+      return;
+    }
+
+    stopPreviewImage();
+    showLoading('Iniciando cámara...');
+
+    try {
+      const flip = true;
+      webcam = new tmImage.Webcam(300, 300, flip);
+      await webcam.setup({ facingMode: 'environment' });
+      await webcam.play();
+      isStreaming = true;
+
+      const container = document.getElementById('webcam-container');
+      container.innerHTML = '';
+      container.appendChild(webcam.canvas);
+      webcam.canvas.style.cssText = 'width:100%;height:100%;object-fit:cover;';
+
+      hideLoading();
+      document.getElementById('cam-btn-text').textContent = 'Detener cámara';
+      document.getElementById('results').classList.add('visible');
+
+      loop();
+    } catch (err) {
+      hideLoading();
+      showToast('❌ No se pudo acceder a la cámara');
+      console.error(err);
+      isStreaming = false;
+    }
+  }
+
+  function stopCamera() {
+    if (webcam) { webcam.stop(); webcam = null; }
+    if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+    isStreaming = false;
+    document.getElementById('webcam-container').innerHTML = '';
+    document.getElementById('cam-btn-text').textContent = 'Activar cámara';
+    document.getElementById('results').classList.remove('visible');
+  }
+
+  async function loop() {
+    if (!isStreaming || !webcam || !model) return;
+    webcam.update();
+    await predict(webcam.canvas);
+    rafId = requestAnimationFrame(loop);
+  }
+
+  // ── Imagen de galería ──────────────────────────────────────────
+  async function loadImageFile(event) {
+    if (!model) { showToast('El modelo aún se está cargando...'); return; }
+    const file = event.target.files[0];
+    if (!file) return;
+
+    stopCamera();
+    showLoading('Analizando imagen...');
+
+    const img = document.getElementById('preview-img');
+    img.onload = async () => {
+      hideLoading();
+      img.style.display = 'block';
+      document.getElementById('webcam-container').innerHTML = '';
+      document.getElementById('results').classList.add('visible');
+      await predict(img);
+    };
+    img.src = URL.createObjectURL(file);
+    event.target.value = '';
+  }
+
+  function stopPreviewImage() {
+    const img = document.getElementById('preview-img');
+    img.style.display = 'none';
+    img.src = '';
+  }
+
+  // ── Predicción ────────────────────────────────────────────────
+  async function predict(imageEl) {
+    if (!model) return;
+    try {
+      const predictions = await model.predict(imageEl);
+      predictions.sort((a, b) => b.probability - a.probability);
+      renderResults(predictions);
+    } catch (err) {
+      console.error('Predict error:', err);
+    }
+  }
+
+  function renderResults(predictions) {
+    const top = predictions[0];
+    const pct = Math.round(top.probability * 100);
+    const info = getInfo(top.className);
+
+    document.getElementById('top-emoji').textContent = info.emoji;
+    document.getElementById('top-name').textContent = top.className;
+    document.getElementById('top-desc').textContent = info.desc;
+    document.getElementById('top-pct').textContent = pct + '%';
+    document.getElementById('top-bar').style.width = pct + '%';
+
+    const list = document.getElementById('prediction-list');
+    const rest = predictions.filter((p, i) => i > 0 && p.probability > 0.01).slice(0, 3);
+    list.innerHTML = rest.map(p => {
+      const w = Math.round(p.probability * 100);
+      const pi = getInfo(p.className);
+      return `
+        <div class="pred-item">
+          <span class="pred-name">${pi.emoji} ${p.className}</span>
+          <div class="pred-bar-bg">
+            <div class="pred-bar-fill" style="width:${w}%"></div>
+          </div>
+          <span class="pred-pct">${w}%</span>
+        </div>`;
+    }).join('');
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────
+  function showLoading(msg) {
+    document.getElementById('loading-text').textContent = msg || 'Cargando...';
+    document.getElementById('loading-overlay').classList.add('show');
+  }
+  function hideLoading() {
+    document.getElementById('loading-overlay').classList.remove('show');
+  }
+  function setStatus(state) {
+    const dot = document.getElementById('status-dot');
+    dot.className = 'status-dot' + (state ? ' ' + state : '');
+  }
+
+  let toastTimer;
+  function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove('show'), 2800);
+  }
+
+  // ── Inicio: cargar modelo automáticamente ─────────────────────
+  window.addEventListener('load', () => {
+    loadModelFromURL(MODEL_URL);
+  });
+</script>
+
+</body>
+</html>
